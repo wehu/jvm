@@ -240,12 +240,12 @@ module JavaEngine where
     runThread :: JVM Int -> (Int -> IO ()) -> TVar JVMEnv -> IO ThreadId
     runThread body finalizer ger = do
         forkIO $ do
-            res <- (try $ do
-                          (r, _) <- (runStateT $ runErrorT body)
-                                       (JThread ger [])
-                          case r of
-                              Left err -> putStrLn err >> return (-1)
-                              Right _  -> return 0) :: IO (Either SomeException Int)
+            res <- (try $ (do
+                            (r, _) <- (runStateT $ runErrorT body)
+                                         (JThread ger [])
+                            case r of
+                                Left err -> putStrLn err >> return (-1)
+                                Right _  -> return 0) :: IO (Either SomeException Int)) >>= evaluate
             case res of
                 Left err -> putStrLn (show err) >> finalizer (-1)
                 Right ec -> finalizer ec
@@ -465,7 +465,7 @@ module JavaEngine where
                             pushFrame nsn mn jc
                             pushArgs d args
                             s <- get
-                            r <- liftIO (try((runStateT $ runErrorT $ execInstrs) s) ::
+                            r <- liftIO (try((runStateT $ runErrorT $ execInstrs) s >>= evaluate) ::
                                    IO (Either SomeException (Either String JType, JThread)))
                             case r of
                                 Left e -> do
@@ -538,7 +538,7 @@ module JavaEngine where
         liftIO $ putStrLn $ cn ++ "::" ++ mn ++ " : instr : " ++ (show instr) ++ " : pc : " ++ (show fpc) ++ " : fp : " ++ (show ffp)
         -- 
         s <- get
-        r <- liftIO (try((runStateT $ runErrorT $ execInstr instr) s) ::
+        r <- liftIO (try((runStateT $ runErrorT $ execInstr instr) s >>= evaluate) ::
                       IO (Either SomeException (Either String (Bool, JType), JThread)))
         case r of
            Left e -> do
@@ -1801,21 +1801,16 @@ module JavaEngine where
               let cn = lookupClassName i jc
                   f  = (\i' ->
                             if i' == 0
-                            then (\_ -> do
-                                     (JInteger c) <- popOpand
-                                     ol <- mapM newObject (replicate c cn)
-                                     aa <- liftIO $ newListArray (0, c -1) ol
-                                     ar <- liftIO $ newIORef $ JArray aa
-                                     return $ JRef ar)
+                            then newObject
                             else let f' = f (i'-1)
-                                  in (\_ -> do
+                                  in (\cn' -> do
                                          (JInteger c) <- popOpand
-                                         ol <- mapM f' (replicate c cn)
+                                         ol <- mapM f' (replicate c cn')
                                          aa <- liftIO $ newListArray (0, c -1) ol
                                          ar <- liftIO $ newIORef $ JArray aa
                                          return $ JRef ar))
                in do
-                    ma <- (f d) ""
+                    ma <- (f d) cn
                     pushOpand ma
                     incPC 4
                     return (True, JNull)
@@ -2016,21 +2011,16 @@ module JavaEngine where
               let cn = lookupClassName i jc
                   f  = (\i' ->
                             if i' == 0
-                            then (\_ -> do
-                                     (JInteger c) <- popOpand
-                                     ol <- mapM newObject (replicate c cn)
-                                     aa <- liftIO $ newListArray (0, c -1) ol
-                                     ar <- liftIO $ newIORef $ JArray aa
-                                     return $ JRef ar)
+                            then newObject
                             else let f' = f (i'-1)
-                                  in (\_ -> do
+                                  in (\cn' -> do
                                          (JInteger c) <- popOpand
-                                         ol <- mapM f' (replicate c cn)
+                                         ol <- mapM f' (replicate c cn')
                                          aa <- liftIO $ newListArray (0, c -1) ol
                                          ar <- liftIO $ newIORef $ JArray aa
                                          return $ JRef ar))
                in do
-                    ma <- (f d) ""
+                    ma <- (f d) cn
                     pushOpand ma
                     incPC 4
                     return (True, JNull)
