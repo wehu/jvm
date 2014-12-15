@@ -313,8 +313,8 @@ module JavaEngine (
                    case res of
                        Left err -> return $ Left $ show err
                        Right jc -> do
-                                     putStrLn "======================================="
-                                     putStrLn $ show jc
+                                     --putStrLn "======================================="
+                                     --putStrLn $ show jc
                                      return $ Right jc
 
     initValue :: TypeSig -> JType
@@ -517,8 +517,11 @@ module JavaEngine (
 
 
     invokeNativeMethod :: (String, String, String) -> [JType] -> JVM JType
-    invokeNativeMethod (cn, n, d) args = do
-        return JNull
+    invokeNativeMethod (cn, n, d) args =
+        case n of
+            "printf" -> let (JInteger i) = args !! 0
+                         in (liftIO $ putStrLn $ show i) >> return JNull
+            _ -> return JNull
 
     searchMain :: NameSpace -> JVM JavaClassObj
     searchMain nsn = do
@@ -562,11 +565,11 @@ module JavaEngine (
     execInstrs = do
         instr <- getInstr
         -- for debug
-        fpc   <- getPC
-        ffp   <- getFP
-        cn    <- class_this <$> getCurrentClass
-        mn    <- method_name <$> getCurrentMethodInfo
-        liftIO $ putStrLn $ cn ++ "::" ++ mn ++ " : instr : " ++ (show instr) ++ " : pc : " ++ (show fpc) ++ " : fp : " ++ (show ffp)
+        -- fpc   <- getPC
+        -- ffp   <- getFP
+        -- cn    <- class_this <$> getCurrentClass
+        -- mn    <- method_name <$> getCurrentMethodInfo
+        -- liftIO $ putStrLn $ cn ++ "::" ++ mn ++ " : instr : " ++ (show instr) ++ " : pc : " ++ (show fpc) ++ " : fp : " ++ (show ffp)
         -- 
         s <- get
         r <- liftIO (try((runStateT $ runErrorT $ execInstr instr) s >>= evaluate) ::
@@ -1857,7 +1860,7 @@ module JavaEngine (
                             then newObject
                             else let f' = f (i'-1)
                                   in (\cn' -> do
-                                         let c = ds !! i' - 1
+                                         let c = ds !! (i' - 1)
                                           in do
                                               ol <- mapM f' (replicate c cn')
                                               aa <- liftIO $ newListArray (0, c -1) ol
