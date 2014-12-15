@@ -230,6 +230,7 @@ module JavaClassReader(
             "LocalVariableTable" -> readLocalVariableTable
             "SourceFile"         -> readSourceFile
             "Synthetic"          -> readSynthetic
+            "StackMapTable"      -> readStackMapTable
             _                    -> error $ "unknown attribute type " ++ n
         return $ AttrInfo {
                            attribute_name = n,
@@ -620,6 +621,44 @@ module JavaClassReader(
                                             method_descriptor_sig = s,
                                             method_attributes     = as
                                            }
+
+    readStackMapTable :: JCParser AttrData
+    readStackMapTable = do
+        l <- readu2
+        count l readStackMapFrame
+        return StackMaps
+
+    readStackMapFrame :: JCParser ()
+    readStackMapFrame = do
+        tag <- readu1
+        case tag of
+            _ | tag >=0 && tag <= 63 -> return ()
+            _ | tag >= 64 && tag <= 127 -> count 1 readVerifTypeInfo >> return ()
+            247 -> readu2 >> count 1 readVerifTypeInfo >> return ()
+            _ | tag >= 248 && tag <= 250 -> readu2 >> return ()
+            251 -> readu2 >> return ()
+            ft | tag >= 252 && tag <= 254 -> readu2 >> count (ft - 251) readVerifTypeInfo >> return ()
+            255 -> do
+                readu2
+                nls <- readu2
+                count nls readVerifTypeInfo
+                nss <- readu2
+                count nss readVerifTypeInfo
+                return ()
+
+    readVerifTypeInfo :: JCParser ()
+    readVerifTypeInfo = do
+        tag <- readu1
+        case tag of
+            0 -> return ()
+            1 -> return ()
+            2 -> return ()
+            4 -> return ()
+            3 -> return ()
+            5 -> return ()
+            6 -> return ()
+            7 -> readu2 >> return ()
+            8 -> readu2 >> return ()
 
     parseTypeSig :: Parser TypeSig
     parseTypeSig =

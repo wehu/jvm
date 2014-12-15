@@ -235,6 +235,7 @@ module JavaClass (
         | LineNumbers [LineNumberInfo]
         | LocalVariables [LocalVariableInfo]
         | SourceFile String
+        | StackMaps
         | Synthetic deriving (Eq, Ord)
 
     instance Show AttrData where
@@ -249,6 +250,7 @@ module JavaClass (
         pp (LocalVariables ll) = brackets $ vcat $ intersperse comma $ map pp ll
         pp (SourceFile sf) = text sf
         pp Synthetic = text "Synthetic"
+        pp StackMaps = text "StackMapTable(fake)"
 
     data CodeInfo = CodeInfo {
                               code_max_stack  :: Int,
