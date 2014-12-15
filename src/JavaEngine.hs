@@ -1,4 +1,4 @@
-{-# LANGUAGE MultiWayIf, DeriveDataTypeable, RecordWildCards, NamedFieldPuns #-}
+{-# LANGUAGE MultiWayIf, DeriveDataTypeable, RecordWildCards, NamedFieldPuns, DoAndIfThenElse #-}
 
 {-
    Copyright 2014 huwei04@hotmail.com
