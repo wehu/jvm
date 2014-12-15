@@ -7,4 +7,4 @@ module Main where
     main :: IO Int
     main = do
     	args <- getArgs
-    	bootup args
+    	bootup $ "a" : args

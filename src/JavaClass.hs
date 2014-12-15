@@ -150,7 +150,20 @@ module JavaClass (
         | SigDouble
         | SigClass String
         | SigArray TypeSig
-        | SigFunc [TypeSig] TypeSig deriving (Show, Eq, Ord)
+        | SigFunc [TypeSig] TypeSig deriving (Eq, Ord)
+
+    instance Show TypeSig where
+        show SigVoid  = "V"
+        show SigByte  = "B"
+        show SigChar  = "C"
+        show SigShort = "S"
+        show SigInteger = "I"
+        show SigLong = "J"
+        show SigFloat = "F"
+        show SigDouble = "D"
+        show (SigClass s) = "L" ++ s ++ ";"
+        show (SigArray s) = "[" ++ (show s)
+        show (SigFunc as r) = "(" ++ (intercalate "" $ map show as) ++ ")" ++ (show r)
 
     data FieldInfo = FieldInfo {
                                 field_access_flags   :: S.Set AccessFlag,

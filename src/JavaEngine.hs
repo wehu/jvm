@@ -101,7 +101,9 @@ module JavaEngine (
                                    } deriving (Typeable)
 
     instance Show JException where
-       show (JException{..}) = show exception_orig ++ (foldl' (\acc s -> acc ++ (show s) ++ "\n") "" exception_stack)
+       show (JException{..}) =
+           show exception_orig ++
+           (foldl' (\acc s -> acc ++ (show s) ++ "\n") "" exception_stack)
 
     instance Exception JException
 
@@ -220,7 +222,11 @@ module JavaEngine (
     currentStack :: JVM [String]
     currentStack = do
         s <- get
-        return $ map (method_name . current_method) $ stack s
+        return $ map (\f ->
+                        let (SigFunc as r) = method_descriptor_sig $ current_method f
+                         in show r ++ (class_this $ current_java_class f) ++
+                            "::" ++ (method_name $ current_method f) ++
+                            "(" ++ (intercalate ", " $ map show as) ++ ")") $ stack s
 
     runThread :: JVM Int -> (Int -> IO ()) -> TVar JVMEnv -> IO ThreadId
     runThread body finalizer ger = do
@@ -383,14 +389,39 @@ module JavaEngine (
             fs' <- allocFields (class_super jc)
             return $ M.insert cn fs fs'
 
+    getPureType :: String -> JVM String
+    getPureType t =
+        case readTypeSig t of
+            Left err -> return t
+            Right s -> let f = \s' -> case s' of
+                                         SigArray as -> f as
+                                         _ -> s'
+                        in return $ show $ f s
+
     newObject :: String -> JVM JType
     newObject cn = do
+        cn' <- getPureType cn
+        case cn' of
+          "B" -> return $ JByte 0
+          "C" -> return $ JChar '\000'
+          "S" -> return $ JShort 0
+          "I" -> return $ JInteger 0
+          "J" -> return $ JLong 0
+          "F" -> return $ JFloat 0
+          "D" -> return $ JDouble 0
+          _ -> do 
+                 nsn <- getCurrentNameSpace
+                 jc <- java_class <$> resolveClass nsn cn'
+                 fs <- allocFields cn
+                 m  <- liftIO $ newEmptyMVar
+                 r  <- liftIO $ newIORef (JObj $ JObject fs m jc)
+                 return $ JRef r
+
+    newObjectWithInit :: String -> String -> [JType] -> JVM JType
+    newObjectWithInit cn d args = do
+        o <- newObject cn
         nsn <- getCurrentNameSpace
-        jc <- java_class <$> resolveClass nsn cn
-        fs <- allocFields cn
-        m  <- liftIO $ newEmptyMVar
-        r  <- liftIO $ newIORef (JObj $ JObject fs m jc)
-        return $ JRef r
+        invokeMethod nsn (cn, "<init>", d) False (o:args)
 
     checkCast :: JavaClass -> JavaClass -> JVM Bool
     checkCast to from = do
@@ -515,13 +546,43 @@ module JavaEngine (
                                         Right r'' -> return r''
               return res
 
+    printJ :: JType -> JVM ()
+    printJ o =
+        case o of
+            JNull      -> return ()
+            JByte v    -> liftIO $ putStr $ show v
+            JChar v    -> liftIO $ putStr $ show v
+            JShort v   -> liftIO $ putStr $ show v
+            JInteger v -> liftIO $ putStr $ show v
+            JLong v    -> liftIO $ putStr $ show v
+            JFloat v   -> liftIO $ putStr $ show v
+            JDouble v  -> liftIO $ putStr $ show v
+            JAddr v    -> liftIO $ putStr $ show v
+            JArray ar  -> do
+              a <- liftIO $ getElems ar
+              liftIO $ putStr "["
+              foldM
+                (\acc v -> printJ v >> (if acc == 1 then return () else liftIO $ putStr ",") >> return (acc-1))
+                (length a)
+                a
+              liftIO $ putStr "]"
+              return ()
+            JObj o     -> return ()
+            v@(JRef r) -> do
+              v' <- liftIO $ readIORef r
+              case v' of
+                (JObj o) -> do
+                  nsn <- getCurrentNameSpace
+                  v' <- invokeMethod nsn (objectFullName, "toString", "()V") True [v]
+                  printJ v'
+                _ -> do
+                  printJ v'
 
     invokeNativeMethod :: (String, String, String) -> [JType] -> JVM JType
-    invokeNativeMethod (cn, n, d) args =
+    invokeNativeMethod n args =
         case n of
-            "printf" -> let (JInteger i) = args !! 0
-                         in (liftIO $ putStrLn $ show i) >> return JNull
-            _ -> return JNull
+            (objectFullName, "printf", "()V") -> mapM printJ args >> return JNull
+            _ -> (throwError $ "cannot find native method " ++ (show n)) >> return JNull
 
     searchMain :: NameSpace -> JVM JavaClassObj
     searchMain nsn = do
@@ -1714,8 +1775,10 @@ module JavaEngine (
                in do
                     args <- popArgs d
                     o@(JRef oref) <- popOpand
-                    jc' <- (\(JObj o') -> instanceof o') <$> (liftIO $ readIORef oref)
-                    let mn = (class_this jc', n, d)
+                    jcn <- (\a -> case a of
+                                    (JObj o') -> class_this $ instanceof o'
+                                    (JArray _) -> objectFullName) <$> (liftIO $ readIORef oref)
+                    let mn = (jcn, n, d)
                      in do
                           r <- invokeMethod ns mn True (o:args)
                           if last d == 'V' then return () else pushOpand r
@@ -1749,8 +1812,10 @@ module JavaEngine (
                in do
                     args <- mapM (\_ -> popOpand) (replicate (nargs-1) 0)
                     o@(JRef oref) <- popOpand
-                    jc' <- (\(JObj o') -> instanceof o') <$> (liftIO $ readIORef oref)
-                    let mn = (class_this jc', n, d)
+                    jcn <- (\a -> case a of
+                                     (JObj o') -> class_this $ instanceof o'
+                                     (JArray _) -> objectFullName) <$> (liftIO $ readIORef oref)
+                    let mn = (jcn, n, d)
                      in do
                           r <- invokeMethod ns mn True (o:args)
                           if last d == 'V' then return () else pushOpand r

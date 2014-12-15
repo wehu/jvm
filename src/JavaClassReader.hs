@@ -647,6 +647,7 @@ module JavaClassReader(
                 nss <- readu2
                 count nss readVerifTypeInfo
                 return ()
+            _ -> error $ "unknown stack map frame tag " ++ (show tag)
 
     readVerifTypeInfo :: JCParser ()
     readVerifTypeInfo = do
@@ -661,6 +662,7 @@ module JavaClassReader(
             6 -> return ()
             7 -> readu2 >> return ()
             8 -> readu2 >> return ()
+            _ -> error $ "unknown verfi type tag " ++ (show tag)
 
     parseTypeSig :: Parser TypeSig
     parseTypeSig =
