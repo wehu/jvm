@@ -39,7 +39,7 @@ module JavaClass (
     lookupClassName,
     lookupFieldName,
     lookupMethodName,
-    lookupInteferceMethodName,
+    lookupInterfaceMethodName,
     lookupFieldInfo,
     lookupFieldAttrInfo,
     lookupMethodInfo,
@@ -651,8 +651,8 @@ module JavaClass (
             ConstUtf8 t = cp ! ti
          in (cn, n, t)
 
-    lookupInteferceMethodName :: Int -> JavaClass -> (String, String, String)
-    lookupInteferceMethodName i c =
+    lookupInterfaceMethodName :: Int -> JavaClass -> (String, String, String)
+    lookupInterfaceMethodName i c =
         let cp = class_const_pool c
             ConstInterfaceMethodRef ci mi = cp ! i
             ConstClass cc = cp ! ci

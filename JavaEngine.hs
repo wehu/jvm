@@ -101,7 +101,7 @@ module JavaEngine (
                                    } deriving (Typeable)
 
     instance Show JException where
-       show (JException{..}) = show exception_orig ++ "\n" ++ (show exception_stack)
+       show (JException{..}) = show exception_orig ++ (foldl' (\acc s -> acc ++ (show s) ++ "\n") "" exception_stack)
 
     instance Exception JException
 
@@ -312,7 +312,10 @@ module JavaEngine (
                    res <- loadClass n'
                    case res of
                        Left err -> return $ Left $ show err
-                       Right jc -> return $ Right jc
+                       Right jc -> do
+                                     putStrLn "======================================="
+                                     putStrLn $ show jc
+                                     return $ Right jc
 
     initValue :: TypeSig -> JType
     initValue s = do
@@ -1739,7 +1742,7 @@ module JavaEngine (
             I_invokeinterface i nargs -> do
               jc <- getCurrentClass
               ns <- getCurrentNameSpace
-              let (_, n, d) = lookupMethodName i jc
+              let (_, n, d) = lookupInterfaceMethodName i jc
                in do
                     args <- mapM (\_ -> popOpand) (replicate (nargs-1) 0)
                     o@(JRef oref) <- popOpand
@@ -1748,7 +1751,7 @@ module JavaEngine (
                      in do
                           r <- invokeMethod ns mn True (o:args)
                           if last d == 'V' then return () else pushOpand r
-              incPC 4
+              incPC 5
               return (True, JNull)
             I_new i -> do
               ns <- getCurrentNameSpace
@@ -1808,9 +1811,15 @@ module JavaEngine (
               jc <- getCurrentClass
               nsn <- getCurrentNameSpace
               t <- java_class <$> (resolveClass nsn $ lookupClassName i jc)
-              (JRef r) <- popOpand
+              v@(JRef r) <- popOpand
               (JObj f) <- liftIO $ readIORef r
-              checkCast t $ instanceof f
+              r <- checkCast t $ instanceof f
+              if r
+              then pushOpand v
+              else do
+                     s  <- get
+                     st <- currentStack
+                     throw $ JException s (Left "cast failed") v st
               incPC 1
               return (True, JNull)
             I_instanceof i -> do
