@@ -1,6 +1,10 @@
 module Main where
 
+    import System.Environment
+
     import JavaEngine
 
     main :: IO Int
-    main = bootup ["Class", "java/lang/Object", "a"]
+    main = do
+    	args <- getArgs
+    	bootup $ ["a"] ++ args

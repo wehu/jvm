@@ -1,4 +1,4 @@
-{-# LANGUAGE FlexibleInstances, OverlappingInstances #-}
+{-# LANGUAGE FlexibleInstances, OverlappingInstances, RecordWildCards, NamedFieldPuns #-}
 
 {-
    Copyright 2014 huwei04@hotmail.com
@@ -78,17 +78,17 @@ module JavaClass (
         show a = show $ pp a
 
     instance PP JavaClass where
-        pp (JavaClass v cp afs tc sc is fs ms as) =
+        pp (JavaClass{..}) =
             vcat [
-                  text "version       = " <+> text (show v),
-                  text "constant pool = " <+> (pp cp),
-                  text "access flags  = " <+> (pp $ S.toList afs),
-                  text "this class    = " <+> text tc,
-                  text "super class   = " <+> text sc,
-                  text "interfacess   = " <+> (brackets $ vcat $ map text $ S.toList is),
-                  text "fields        = " <+> (pp $ M.elems fs),
-                  text "methods       = " <+> (pp $ M.elems ms),
-                  text "attributes    = " <+> (pp $ M.elems as)
+                  text "version       = " <+> text (show class_version),
+                  text "constant pool = " <+> (pp class_const_pool),
+                  text "access flags  = " <+> (pp $ S.toList class_access_flags),
+                  text "this class    = " <+> text class_this,
+                  text "super class   = " <+> text class_super,
+                  text "interfacess   = " <+> (brackets $ vcat $ map text $ S.toList class_interfaces),
+                  text "fields        = " <+> (pp $ M.elems class_fields),
+                  text "methods       = " <+> (pp $ M.elems class_methods),
+                  text "attributes    = " <+> (pp $ M.elems class_attributes)
                  ]
 
     data Version = Version Int Int deriving (Eq, Ord)
@@ -164,13 +164,13 @@ module JavaClass (
         show a = show $ pp a
 
     instance PP FieldInfo where
-        pp (FieldInfo afs n d s as) =
+        pp (FieldInfo{..}) =
             vcat [
-                  text "access flags    = " <+> (pp $ S.toList afs),
-                  text "name            = " <+> text n,
-                  text "descriptor      = " <+> text d,
-                  text "descriptor sig  = " <+> (text $ show s),
-                  text "attributes      = " <+> (pp $ M.elems as)
+                  text "access flags    = " <+> (pp $ S.toList field_access_flags),
+                  text "name            = " <+> text field_name,
+                  text "descriptor      = " <+> text field_descriptor,
+                  text "descriptor sig  = " <+> (text $ show field_descriptor_sig),
+                  text "attributes      = " <+> (pp $ M.elems field_attributes)
                  ]
 
     instance Show [FieldInfo] where
@@ -191,13 +191,13 @@ module JavaClass (
         show a = show $ pp a
 
     instance PP MethodInfo where
-        pp (MethodInfo afs n d s as) =
+        pp (MethodInfo{..}) =
             vcat [
-                  text "access flags   = " <+> (pp $ S.toList afs),
-                  text "name           = " <+> text n,
-                  text "descriptor     = " <+> text d,
-                  text "descriptor sig = " <+> (text $ show s),
-                  text "attributes     = " <+> (pp $ M.elems as)
+                  text "access flags   = " <+> (pp $ S.toList method_access_flags),
+                  text "name           = " <+> text method_name,
+                  text "descriptor     = " <+> text method_descriptor,
+                  text "descriptor sig = " <+> (text $ show method_descriptor_sig),
+                  text "attributes     = " <+> (pp $ M.elems method_attributes)
                  ]
 
     instance Show [MethodInfo] where
@@ -215,10 +215,10 @@ module JavaClass (
         show a = show $ pp a
 
     instance PP AttrInfo where
-        pp (AttrInfo n info) = 
+        pp (AttrInfo{..}) = 
             vcat [
-                  text "name = " <+> text n,
-                  text "info = " <+> (pp info)
+                  text "name = " <+> text attribute_name,
+                  text "info = " <+> (pp attribute_info)
                  ]
 
     instance Show [AttrInfo] where
@@ -282,12 +282,12 @@ module JavaClass (
         show a = show $ pp a
 
     instance PP ExceptionInfo where
-        pp (ExceptionInfo sp ep hp ct) =
+        pp (ExceptionInfo{..}) =
             vcat [
-                  text "start pc   = " <+> text (show sp),
-                  text "end pc     = " <+> text (show ep),
-                  text "handler pc = " <+> text (show hp),
-                  text "catch type = " <+> text (show ct)
+                  text "start pc   = " <+> text (show exception_start_pc),
+                  text "end pc     = " <+> text (show exception_end_pc),
+                  text "handler pc = " <+> text (show exception_handler_pc),
+                  text "catch type = " <+> text (show exception_catch_type)
                  ]
 
     data InnerClassInfo = InnerClassInfo {
@@ -301,12 +301,12 @@ module JavaClass (
         show a = show $ pp a
 
     instance PP InnerClassInfo where
-        pp (InnerClassInfo icn ocn n cafs) =
+        pp (InnerClassInfo{..}) =
             vcat [
-                  text "inner class name  = " <+> text icn,
-                  text "outer class name  = " <+> text ocn,
-                  text "class name        = " <+> text n,
-                  text "access flags      = " <+> (pp $ S.toList cafs)
+                  text "inner class name  = " <+> text inner_class_name,
+                  text "outer class name  = " <+> text outer_class_name,
+                  text "class name        = " <+> text inner_name,
+                  text "access flags      = " <+> (pp $ S.toList inner_class_access_flags)
                  ]
 
     data LineNumberInfo = LineNumberInfo {
@@ -318,10 +318,10 @@ module JavaClass (
         show a = show $ pp a
 
     instance PP LineNumberInfo where
-        pp (LineNumberInfo sp ln) =
+        pp (LineNumberInfo{..}) =
             vcat [
-                  text "start pc    = " <+> text (show sp),
-                  text "line number = " <+> text (show ln)
+                  text "start pc    = " <+> text (show line_number_start_pc),
+                  text "line number = " <+> text (show line_number)
                  ]
 
     data LocalVariableInfo = LocalVariableInfo {
@@ -336,13 +336,13 @@ module JavaClass (
         show a = show $ pp a
 
     instance PP LocalVariableInfo where
-        pp (LocalVariableInfo sp l n d i) =
+        pp (LocalVariableInfo{..}) =
             vcat [
-                  text "start pc   = " <+> text (show sp),
-                  text "length     = " <+> text (show l),
-                  text "name       = " <+> text n,
-                  text "descriptor = " <+> text d,
-                  text "index      = " <+> text (show i)
+                  text "start pc   = " <+> text (show local_variable_start_pc),
+                  text "length     = " <+> text (show local_variable_length),
+                  text "name       = " <+> text local_variable_name,
+                  text "descriptor = " <+> text local_variable_descriptor,
+                  text "index      = " <+> text (show local_variable_index)
                  ]
 
     type Instrs = Array Int Instr

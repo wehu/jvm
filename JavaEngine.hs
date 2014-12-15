@@ -1,4 +1,4 @@
-{-# LANGUAGE MultiWayIf, DeriveDataTypeable #-}
+{-# LANGUAGE MultiWayIf, DeriveDataTypeable, RecordWildCards, NamedFieldPuns #-}
 
 {-
    Copyright 2014 huwei04@hotmail.com
@@ -13,7 +13,9 @@
    limitations under the License.
 -}
 
-module JavaEngine where
+module JavaEngine (
+      bootup
+    ) where
 
     import Control.Applicative
     import Control.Monad.State
@@ -22,12 +24,15 @@ module JavaEngine where
     import Control.Concurrent
     import Control.Concurrent.STM
     import GHC.Conc
+    import System.Environment
+    import System.Directory
     import Data.Array.MArray
     import Data.Array.IO
     import qualified Data.Array as A
     import qualified Data.Set as S
     import qualified Data.Map as M
     import Data.List
+    import Data.List.Split
     import Data.Bits
     import Data.Binary.IEEE754
     import Data.Char
@@ -84,17 +89,19 @@ module JavaEngine where
         | JFloat Float
         | JDouble Double
         | JObj JObject
+        | JAddr Int
         | JArray (IOArray Int JType)
         | JRef (IORef JType) deriving (Eq)
 
     data JException = JException {
                                     exception_state :: JThread,
                                     exception_orig  :: Either String SomeException,
-                                    exception_data  :: JType
+                                    exception_data  :: JType,
+                                    exception_stack :: [String]
                                    } deriving (Typeable)
 
     instance Show JException where
-       show (JException _ o _) = show o
+       show (JException{..}) = show exception_orig ++ "\n" ++ (show exception_stack)
 
     instance Exception JException
 
@@ -103,6 +110,12 @@ module JavaEngine where
 
     classFullName :: String
     classFullName = "java/lang/Class"
+
+    javaHomeEnvName :: String
+    javaHomeEnvName = "JAVAHOME"
+
+    classSearchPathEnvName :: String
+    classSearchPathEnvName = "CLASSPATH"
 
     bootupNameSpace :: NameSpace
     bootupNameSpace = NameSpace "bootup"
@@ -114,23 +127,16 @@ module JavaEngine where
     getJVMEnvRef = env <$> get
 
     getJVMEnv :: JVM JVMEnv
-    getJVMEnv = do
-        ger <- getJVMEnvRef
-        ge  <- liftIO $ atomically $ readTVar ger
-        return ge
+    getJVMEnv = getJVMEnvRef >>= (\g -> liftIO $ atomically $ readTVar g)
 
     getStack :: JVM [JFrame]
     getStack = stack <$> get
 
     putStack :: [JFrame] -> JVM ()
-    putStack st = do
-        e <- get
-        put $ e{stack = st}
+    putStack st = get >>= (\e -> put $ e{stack = st})
 
     getTopFrame :: JVM JFrame
-    getTopFrame = do
-        (f:_) <- getStack
-        return f
+    getTopFrame = getStack >>= (\(f:_) -> return f)
 
     pushFrame :: NameSpace -> (String, String) -> JavaClass -> JVM JFrame
     pushFrame ns mn jc =
@@ -138,84 +144,58 @@ module JavaEngine where
             Just ml = lookupMethodCodeMaxLocals mn jc
             Just mi = lookupMethodInfo          mn jc
             s       = ms + ml
-        in do
-             ffr <- liftIO $ newListArray (0, (s-1)) $ replicate s JNull
-             ffp <- liftIO $ newIORef ml
-             fpc <- liftIO $ newIORef 0
-             let fr = JFrame {
-                              current_java_class = jc,
-                              current_namespace  = ns,
-                              frame              = ffr,
-                              pc                 = fpc,
-                              fp                 = ffp,
-                              current_method     = mi
-                             }
-              in do
-                   st <- getStack
-                   putStack (fr:st)
-                   return fr
+         in do
+              ffr <- liftIO $ newListArray (0, (s-1)) $ replicate s JNull
+              ffp <- liftIO $ newIORef ml
+              fpc <- liftIO $ newIORef 0
+              let fr = JFrame {
+                               current_java_class = jc,
+                               current_namespace  = ns,
+                               frame              = ffr,
+                               pc                 = fpc,
+                               fp                 = ffp,
+                               current_method     = mi
+                              }
+               in do
+                    st <- getStack
+                    putStack (fr:st)
+                    return fr
   
     popFrame :: JVM ()
-    popFrame = do
-        (_:st) <- getStack
-        putStack st
+    popFrame = getStack >>= (\(_:st) -> putStack st)
 
     readFrame :: Int -> JVM JType
-    readFrame i = do
-        top <- getTopFrame
-        o   <- liftIO $ readArray (frame top) i
-        return o
-
-    getPC :: JVM Int
-    getPC = do
-        top <- getTopFrame
-        fpc <- liftIO $ readIORef $ pc top
-        return fpc
-
-    putPC :: Int -> JVM ()
-    putPC fpc = do
-        top <- getTopFrame
-        liftIO $ writeIORef (pc top) fpc
-
-    incPC :: Int -> JVM ()
-    incPC n = do
-        fpc <- getPC
-        putPC (fpc + n)
-
-    getInstr :: JVM Instr
-    getInstr = do
-        p  <- getPC
-        is <- code_instrs <$> getCurrentCodeInfo
-        return $ is A.! p
-
-    getFP :: JVM Int
-    getFP = do
-        top <- getTopFrame
-        ffp  <- liftIO $ readIORef $ fp top
-        return ffp
-
-    putFP :: Int -> JVM ()
-    putFP ffp = do
-        top <- getTopFrame
-        liftIO $ writeIORef (fp top) ffp
-
-    pushOpand :: JType -> JVM ()
-    pushOpand o = do
-        ffp <- getFP
-        writeFrame ffp o
-        putFP (ffp + 1)
-
-    popOpand :: JVM JType
-    popOpand = do
-        ffp <- getFP
-        o   <- readFrame (ffp - 1)
-        putFP (ffp - 1) 
-        return o
+    readFrame i = getTopFrame >>= (\top -> liftIO $ flip readArray i $ frame top)
 
     writeFrame :: Int -> JType -> JVM ()
-    writeFrame i o = do
-        top <- getTopFrame
-        liftIO $ writeArray (frame top) i o
+    writeFrame i o = getTopFrame >>= (\top -> liftIO $ writeArray (frame top) i o)
+
+    getPC :: JVM Int
+    getPC = getTopFrame >>= (\top -> liftIO $ readIORef $ pc top)
+
+    putPC :: Int -> JVM ()
+    putPC fpc = getTopFrame >>= (\top -> liftIO $ flip writeIORef fpc $ pc top)
+
+    incPC :: Int -> JVM ()
+    incPC n = getPC >>= (\fpc -> putPC $ fpc + n)
+
+    getInstr :: JVM Instr
+    getInstr = (A.!) <$> (code_instrs <$> getCurrentCodeInfo) <*> getPC
+
+    getFP :: JVM Int
+    getFP = getTopFrame >>= (\top -> liftIO $ readIORef $ fp top)
+
+    putFP :: Int -> JVM ()
+    putFP ffp = getTopFrame >>= (\top -> liftIO $ flip writeIORef ffp $ fp top)
+
+    incFP :: Int -> JVM ()
+    incFP n = getFP >>= (\ffp -> putFP $ ffp + n)
+
+    pushOpand :: JType -> JVM ()
+    pushOpand o = getFP >>= (\ffp -> writeFrame ffp o) >> incFP 1
+
+    popOpand :: JVM JType
+    popOpand = incFP (-1) >> getFP >>= readFrame
 
     getCurrentNameSpace :: JVM NameSpace
     getCurrentNameSpace = current_namespace <$> getTopFrame
@@ -236,6 +216,11 @@ module JavaEngine where
     getCurrentCodeInfo = do
         (Code ci) <- attribute_info <$> getCurrentMethodAttrInfo "Code"
         return ci
+
+    currentStack :: JVM [String]
+    currentStack = do
+        s <- get
+        return $ map (method_name . current_method) $ stack s
 
     runThread :: JVM Int -> (Int -> IO ()) -> TVar JVMEnv -> IO ThreadId
     runThread body finalizer ger = do
@@ -269,24 +254,24 @@ module JavaEngine where
                   ge <- readTVar ger
                   cs <- let ns = namespaces ge
                          in case M.lookup nsn ns of
-                                Nothing -> let cs  = M.empty
-                                               ge' = ge{namespaces = M.insert nsn cs ns}
+                                Nothing -> let cs' = M.empty
+                                               ge' = ge{namespaces = M.insert nsn cs' ns}
                                             in do
                                                  writeTVar ger ge'
-                                                 return cs
-                                Just cs -> return cs
+                                                 return cs'
+                                Just cs' -> return cs'
                   case M.lookup n cs of
                      Nothing -> do
-                                  jc <- unsafeIOToSTM $ findClass n
-                                  ge <- readTVar ger
+                                  jc  <- unsafeIOToSTM $ findClass n
+                                  ge' <- readTVar ger
                                   case jc of
-                                     Right jc' -> let ns   = namespaces ge
+                                     Right jc' -> let ns = namespaces ge'
                                                    in do
                                                         jc'' <- unsafeIOToSTM $ initClass (JavaClassObj jc' nsn M.empty)
                                                         let cs'  = M.insert n jc'' cs
-                                                            ge'  = ge{namespaces = M.insert nsn cs' ns}
+                                                            ge'' = ge'{namespaces = M.insert nsn cs' ns}
                                                          in do
-                                                              writeTVar ger ge'
+                                                              writeTVar ger ge''
                                                               return $ Right jc''
                                      Left err -> return $ Left err
                      Just jc -> return (Right jc)
@@ -294,12 +279,40 @@ module JavaEngine where
             Left err -> throwError err
             Right c' -> return c' 
 
+    getEnvOrNot :: String -> IO String
+    getEnvOrNot n = do
+        r <- try (getEnv n) :: IO (Either SomeException String)
+        case r of
+            Left _  -> return ""
+            Right s -> return s
+
     findClass :: String -> IO (Either String JavaClass)
     findClass n = do
-        res <- loadClass $ n ++ ".class" 
-        case res of
-            Left err -> return $ Left $ show err
-            Right jc -> return $ Right jc
+        jh  <- getEnvOrNot javaHomeEnvName
+        ps  <- splitOn ":" <$> getEnvOrNot classSearchPathEnvName
+        cns <- foldM
+                (\acc p ->
+                   let n' = p ++ "/" ++ n
+                   in do
+                        e <- doesFileExist n' 
+                        if e
+                        then return (n':acc)
+                        else let n'' = n' ++ ".class"
+                              in do
+                                   e' <- doesFileExist n''
+                                   if e'
+                                   then return (n'':acc)
+                                   else return acc)
+                []
+                (".":jh:ps)
+        if length cns == 0
+        then return $ Left $ "cannot find class " ++ n
+        else let n' = cns !! 0
+              in do
+                   res <- loadClass n'
+                   case res of
+                       Left err -> return $ Left $ show err
+                       Right jc -> return $ Right jc
 
     initValue :: TypeSig -> JType
     initValue s = do
@@ -338,7 +351,7 @@ module JavaEngine where
     readStaticField :: (String, String, String) -> JVM JType
     readStaticField (cn, n, d) = do
         nsn <- getCurrentNameSpace
-        fs <- static_fields <$> resolveClass nsn cn
+        fs  <- static_fields <$> resolveClass nsn cn
         let Just f = M.lookup (n, d) fs
          in do
               v <- liftIO $ readIORef f
@@ -347,12 +360,12 @@ module JavaEngine where
     writeStaticField :: (String, String, String) -> JType -> JVM ()
     writeStaticField (cn, n, d) v = do
         nsn <- getCurrentNameSpace
-        fs <- static_fields <$> resolveClass nsn cn
+        fs  <- static_fields <$> resolveClass nsn cn
         let Just f = M.lookup (n, d) fs
          in liftIO $ writeIORef f v
 
-    collectFields :: String -> JVM (M.Map String (M.Map (String, String) (IORef JType)))
-    collectFields cn = do
+    allocFields :: String -> JVM (M.Map String (M.Map (String, String) (IORef JType)))
+    allocFields cn = do
         nsn <- getCurrentNameSpace
         if cn == ""
         then return M.empty
@@ -364,21 +377,35 @@ module JavaEngine where
                         return $ M.insert (n, d) r acc)
                     M.empty
                     (M.toList $ class_fields jc)
-            fs' <- collectFields (class_super jc)
+            fs' <- allocFields (class_super jc)
             return $ M.insert cn fs fs'
 
     newObject :: String -> JVM JType
     newObject cn = do
         nsn <- getCurrentNameSpace
         jc <- java_class <$> resolveClass nsn cn
-        fs <- collectFields cn
+        fs <- allocFields cn
         m  <- liftIO $ newEmptyMVar
         r  <- liftIO $ newIORef (JObj $ JObject fs m jc)
         return $ JRef r
 
     checkCast :: JavaClass -> JavaClass -> JVM Bool
     checkCast to from = do
-        return True
+        nsn <- getCurrentNameSpace
+        let checksuper = (\f ->
+                           if to == f
+                           then return True
+                           else case class_super f of
+                                  "" -> return False
+                                  n -> do
+                                         sc <- java_class <$> resolveClass nsn n
+                                         checksuper sc)
+         in do
+             r <- checksuper from
+             if r
+             then return True
+             else let is = class_interfaces from
+                   in return $ S.member (class_this to) is
 
     resolveField :: (String, String, String) -> JObject -> JVM (IORef JType)
     resolveField (cn, n, d) o = do
@@ -420,7 +447,7 @@ module JavaEngine where
         case readTypeSig d of
             Left err -> throwError err
             Right (SigFunc ss r) ->
-                  mapM (\_ -> popOpand) ss
+                  mapM (\_ -> popOpand) ss >>= (\l -> return $ reverse l)
 
     checkArg :: TypeSig -> JType -> JVM ()
     checkArg SigByte (JByte _)       = return () 
@@ -431,7 +458,7 @@ module JavaEngine where
     checkArg SigFloat (JFloat _)     = return () 
     checkArg SigDouble (JDouble _)   = return () 
     checkArg (SigClass _) (JRef _)   = return ()
-    checkArg (SigArray _) (JRef _) = return ()
+    checkArg (SigArray _) (JRef _)   = return ()
     checkArg _ _ = throwError "arguments type mismatch"
 
     pushArgs :: String -> [JType] -> JVM ()
@@ -471,8 +498,9 @@ module JavaEngine where
                                 Left e -> do
                                             case fromException e of
                                                Nothing -> do popFrame
-                                                             throw $ JException s (Right e) JNull
-                                               Just (JException s' _ _) -> do
+                                                             st <- currentStack
+                                                             throw $ JException s (Right e) JNull st
+                                               Just (JException {exception_state=s', ..}) -> do
                                                   put s'
                                                   popFrame
                                                   throw e
@@ -498,7 +526,7 @@ module JavaEngine where
 
     searchMain' :: [JavaClassObj] -> JVM JavaClassObj
     searchMain' cs = do
-        liftIO $ putStrLn $ show $ map java_class cs
+        -- liftIO $ putStrLn $ show $ map java_class cs
         let cs' = foldl'
                    (\acc jco ->
                      let jc = java_class jco 
@@ -529,8 +557,8 @@ module JavaEngine where
 
     execInstrs :: JVM JType
     execInstrs = do
-        -- for debug
         instr <- getInstr
+        -- for debug
         fpc   <- getPC
         ffp   <- getFP
         cn    <- class_this <$> getCurrentClass
@@ -543,7 +571,7 @@ module JavaEngine where
         case r of
            Left e -> do
                es <- code_exceptions <$> getCurrentCodeInfo
-               p <- getPC
+               p  <- getPC
                let ces = foldl'
                            (\acc ei ->
                               if p >= (exception_start_pc ei) && p <= (exception_end_pc ei)
@@ -552,8 +580,20 @@ module JavaEngine where
                            []
                            es
                 in case fromException e of
-                      Nothing -> throw $ JException s (Right e) JNull -- TODO handle exceptions
-                      Just (JException _ o d) -> throw $ JException s o d
+                       Nothing -> do
+                            st <- currentStack
+                            throw $ JException s (Right e) JNull st
+                       Just je@(JException {exception_state=s', ..}) -> do
+                            put s'
+                            if length ces == 0
+                            then throw je
+                            else let (p', eni) = ces !! 0
+                                  in do
+                                       jc <- getCurrentClass
+                                       eo <- newObject $ lookupClassName eni jc
+                                       pushOpand eo
+                                       putPC p'
+                                       execInstrs
            Right (r', s') -> do
                put s'
                case r' of
@@ -647,14 +687,14 @@ module JavaEngine where
               cp <- class_const_pool <$> getCurrentClass
               case cp A.! i of
                  ConstInteger v -> pushOpand $ JInteger v
-                 ConstFloat v -> pushOpand $ JFloat v
+                 ConstFloat v   -> pushOpand $ JFloat v
                 -- ConstString v  ->                              -- TODO
               incPC 3
               return (True, JNull)
             I_ldc2_w i -> do
               cp <- class_const_pool <$> getCurrentClass
               case cp A.! i of
-                 ConstLong v -> pushOpand $ JLong v
+                 ConstLong v   -> pushOpand $ JLong v
                  ConstDouble v -> pushOpand $ JDouble v
               incPC 3
               return (True, JNull)
@@ -879,7 +919,7 @@ module JavaEngine where
               v <- popOpand
               case v of
                  JRef _ -> return ()
-                 JInteger _ -> return ()
+                 JAddr _ -> return ()
               writeFrame i v
               incPC 2
               return (True, JNull)
@@ -967,7 +1007,7 @@ module JavaEngine where
               v <- popOpand
               case v of
                  JRef _ -> return ()
-                 JInteger _ -> return ()
+                 JAddr _ -> return ()
               writeFrame 0 v
               incPC 1
               return (True, JNull)
@@ -975,7 +1015,7 @@ module JavaEngine where
               v <- popOpand
               case v of
                  JRef _ -> return ()
-                 JInteger _ -> return ()
+                 JAddr _ -> return ()
               writeFrame 1 v
               incPC 1
               return (True, JNull)
@@ -983,7 +1023,7 @@ module JavaEngine where
               v <- popOpand
               case v of
                  JRef _ -> return ()
-                 JInteger _ -> return ()
+                 JAddr _ -> return ()
               writeFrame 2 v
               incPC 1
               return (True, JNull)
@@ -991,7 +1031,7 @@ module JavaEngine where
               v <- popOpand
               case v of
                  JRef _ -> return ()
-                 JInteger _ -> return ()
+                 JAddr _ -> return ()
               writeFrame 3 v
               incPC 1
               return (True, JNull)
@@ -1589,11 +1629,11 @@ module JavaEngine where
               return (True, JNull)
             I_jsr i -> do
               p <- getPC
-              pushOpand (JInteger $ p + 1)
+              pushOpand (JAddr $ p + 1)
               incPC i
               return (True, JNull)
             I_ret i -> do
-              (JInteger p) <- readFrame i
+              (JAddr p) <- readFrame i
               putPC p
               return (True, JNull)
             I_tableswitch d l h ps -> do
@@ -1723,15 +1763,15 @@ module JavaEngine where
             I_newarray i -> do
               (JInteger c) <- popOpand
               let l = replicate c (case i of
-                                     4 -> JBool False
-                                     5 -> JChar '\000'
-                                     6 -> JFloat 0
-                                     7 -> JDouble 0
-                                     8 -> JByte 0
-                                     9 -> JShort 0
+                                     4  -> JBool False
+                                     5  -> JChar '\000'
+                                     6  -> JFloat 0
+                                     7  -> JDouble 0
+                                     8  -> JByte 0
+                                     9  -> JShort 0
                                      10 -> JInteger 0
                                      11 -> JLong 0
-                                     _ -> JNull)
+                                     _  -> JNull)
                in do
                    a <- liftIO $ newListArray (0, c-1) l
                    ar <- liftIO $ newIORef $ JArray a
@@ -1761,8 +1801,9 @@ module JavaEngine where
               return (True, JNull)
             I_athrow -> do
               v@(JRef _) <- popOpand
-              s <- get
-              throw $ JException s (Left "JException") v 
+              s  <- get
+              st <- currentStack
+              throw $ JException s (Left "JException") v st
             I_checkcast i -> do
               jc <- getCurrentClass
               nsn <- getCurrentNameSpace
@@ -1794,21 +1835,25 @@ module JavaEngine where
               liftIO $ takeMVar (mutex o)
               incPC 1
               return (True, JNull)
-            --I_wide
             I_multianewarray i d -> do
               jc <- getCurrentClass
               nsn <- getCurrentNameSpace
+              ds <- mapM (\_-> do
+                           (JInteger d') <- popOpand
+                           return d')
+                         (replicate d 0) >>= (\l -> return $ reverse l)
               let cn = lookupClassName i jc
                   f  = (\i' ->
                             if i' == 0
                             then newObject
                             else let f' = f (i'-1)
                                   in (\cn' -> do
-                                         (JInteger c) <- popOpand
-                                         ol <- mapM f' (replicate c cn')
-                                         aa <- liftIO $ newListArray (0, c -1) ol
-                                         ar <- liftIO $ newIORef $ JArray aa
-                                         return $ JRef ar))
+                                         let c = ds !! i' - 1
+                                          in do
+                                              ol <- mapM f' (replicate c cn')
+                                              aa <- liftIO $ newListArray (0, c -1) ol
+                                              ar <- liftIO $ newIORef $ JArray aa
+                                              return $ JRef ar))
                in do
                     ma <- (f d) cn
                     pushOpand ma
@@ -1831,252 +1876,67 @@ module JavaEngine where
               return (True, JNull)
             I_jsr_w i -> do
               p <- getPC
-              pushOpand (JInteger $ p + 1)
+              pushOpand (JAddr $ p + 1)
               incPC i
               return (True, JNull)
-            I_ldc_quick i -> do
-              cp <- class_const_pool <$> getCurrentClass
-              case cp A.! i of
-                 ConstInteger v -> pushOpand $ JInteger v
-                 ConstFloat v   -> pushOpand $ JFloat v
-                 -- ConstString v  ->                              -- TODO
-              incPC 2
-              return (True, JNull)
-            I_ldc_w_quick i -> do
-              cp <- class_const_pool <$> getCurrentClass
-              case cp A.! i of
-                 ConstInteger v -> pushOpand $ JInteger v
-                 ConstFloat v -> pushOpand $ JFloat v
-                -- ConstString v  ->                              -- TODO
+            I_iload_w i -> do
+              v@(JInteger _) <- readFrame i
+              pushOpand v
               incPC 3
               return (True, JNull)
-            I_ldc2_w_quick i -> do
-              cp <- class_const_pool <$> getCurrentClass
-              case cp A.! i of
-                 ConstLong v -> pushOpand $ JLong v
-                 ConstDouble v -> pushOpand $ JDouble v
+            I_lload_w i -> do
+              v@(JLong _) <- readFrame i
+              pushOpand v
               incPC 3
               return (True, JNull)
-            I_getfield_quick i -> do
-              (JRef oref) <- popOpand
-              o <- liftIO $ readIORef oref
-              jc <- getCurrentClass
-              let fn = lookupFieldName i jc
-                  (JObj o') = o
-               in do
-                    v <- readObjField fn o'
-                    pushOpand v
+            I_fload_w i -> do
+              v@(JFloat _) <- readFrame i
+              pushOpand v
               incPC 3
               return (True, JNull)
-            I_putfield_quick i -> do
-              v <- popOpand
-              (JRef oref) <- popOpand
-              o <- liftIO $ readIORef oref
-              jc <- getCurrentClass
-              let fn = lookupFieldName i jc
-                  (JObj o') = o
-               in writeObjField fn o' v
+            I_dload_w i -> do
+              v@(JDouble _) <- readFrame i
+              pushOpand v
               incPC 3
               return (True, JNull)
-            I_getfield2_quick i -> do
-              (JRef oref) <- popOpand
-              o <- liftIO $ readIORef oref
-              jc <- getCurrentClass
-              let fn = lookupFieldName i jc
-                  (JObj o') = o
-               in do
-                    v <- readObjField fn o'
-                    pushOpand v
+            I_aload_w i -> do
+              v@(JRef _) <- readFrame i
+              pushOpand v
               incPC 3
               return (True, JNull)
-            I_putfield2_quick i -> do
-              v <- popOpand
-              (JRef oref) <- popOpand
-              o <- liftIO $ readIORef oref
-              jc <- getCurrentClass
-              let fn = lookupFieldName i jc
-                  (JObj o') = o
-               in writeObjField fn o' v
+            I_istore_w i -> do
+              v@(JInteger _) <- popOpand
+              writeFrame i v
               incPC 3
               return (True, JNull)
-            I_getstatic_quick i -> do
-              jc <- getCurrentClass
-              let fn = lookupFieldName i jc
-               in do
-                    r <- readStaticField fn
-                    pushOpand r
+            I_lstore_w i -> do
+              v@(JLong _) <- popOpand
+              writeFrame i v
               incPC 3
               return (True, JNull)
-            I_putstatic_quick i -> do
-              v <- popOpand
-              jc <- getCurrentClass
-              let fn = lookupFieldName i jc
-               in writeStaticField fn v
+            I_fstore_w i -> do
+              v@(JFloat _) <- popOpand
+              writeFrame i v
               incPC 3
               return (True, JNull)
-            I_getstatic2_quick i -> do
-              jc <- getCurrentClass
-              let fn = lookupFieldName i jc
-               in do
-                    r <- readStaticField fn
-                    pushOpand r
+            I_dstore_w i -> do
+              v@(JDouble _) <- popOpand
+              writeFrame i v
               incPC 3
               return (True, JNull)
-            I_putstatic2_quick i -> do
-              v <- popOpand
-              jc <- getCurrentClass
-              let fn = lookupFieldName i jc
-               in writeStaticField fn v
+            I_astore_w i -> do
+              v@(JRef _) <- popOpand
+              writeFrame i v
               incPC 3
               return (True, JNull)
-            I_invokevirtual_quick i -> do
-              jc <- getCurrentClass
-              ns <- getCurrentNameSpace
-              let (_, n, d) = lookupMethodName i jc
-               in do
-                    args <- popArgs d
-                    o@(JRef oref) <- popOpand
-                    jc' <- (\(JObj o') -> instanceof o') <$> (liftIO $ readIORef oref)
-                    let mn = (class_this jc', n, d)
-                     in do
-                          r <- invokeMethod ns mn True (o:args)
-                          if last d == 'V' then return () else pushOpand r
-              incPC 3
-              return (True, JNull)
-            --I_invokenonvirtual_quick Int
-            --I_invokesuper_quick Int
-            I_invokestatic_quick i -> do
-              jc <- getCurrentClass
-              ns <- getCurrentNameSpace
-              let mn@(_, _, d) = lookupMethodName i jc
-               in do
-                    args <- popArgs d
-                    r <- invokeMethod ns mn False args
-                    if last d == 'V' then return () else pushOpand r
-              incPC 3
-              return (True, JNull)
-            I_invokeinterface_quick i nargs -> do
-              jc <- getCurrentClass
-              ns <- getCurrentNameSpace
-              let (_, n, d) = lookupMethodName i jc
-               in do
-                    args <- mapM (\_ -> popOpand) (replicate (nargs-1) 0)
-                    o@(JRef oref) <- popOpand
-                    jc' <- (\(JObj o') -> instanceof o') <$> (liftIO $ readIORef oref)
-                    let mn = (class_this jc', n, d)
-                     in do
-                          r <- invokeMethod ns mn True (o:args)
-                          if last d == 'V' then return () else pushOpand r
+            I_iinc_w i c -> do
+              (JInteger v) <- readFrame i
+              writeFrame i $ JInteger (v + c)
               incPC 4
               return (True, JNull)
-            I_invokevirtualobject_quick i -> do
-              jc <- getCurrentClass
-              ns <- getCurrentNameSpace
-              let (_, n, d) = lookupMethodName i jc
-               in do
-                    args <- popArgs d
-                    o@(JRef oref) <- popOpand
-                    jc' <- (\(JObj o') -> instanceof o') <$> (liftIO $ readIORef oref)
-                    let mn = (class_this jc', n, d)
-                     in do
-                          r <- invokeMethod ns mn True (o:args)
-                          if last d == 'V' then return () else pushOpand r
-              incPC 3
-              return (True, JNull)
-            I_new_quick i -> do
-              ns <- getCurrentNameSpace
-              jc <- getCurrentClass
-              let n = lookupClassName i jc 
-               in do
-                    cn <- (class_this . java_class) <$> resolveClass ns n
-                    o <- newObject cn
-                    pushOpand o
-              incPC 3
-              return (True, JNull)
-            I_anewarray_quick i -> do
-              ns <- getCurrentNameSpace
-              jc <- getCurrentClass
-              let cn = lookupClassName i jc 
-               in do
-                    (JInteger c) <- popOpand
-                    ol <- mapM newObject (replicate c cn)
-                    aa <- liftIO $ newListArray (0, c -1) ol
-                    ar <- liftIO $ newIORef $ JArray aa
-                    pushOpand $ JRef ar
-              incPC 3
-              return (True, JNull)
-            I_multianewarray_quick i d -> do
-              jc <- getCurrentClass
-              nsn <- getCurrentNameSpace
-              let cn = lookupClassName i jc
-                  f  = (\i' ->
-                            if i' == 0
-                            then newObject
-                            else let f' = f (i'-1)
-                                  in (\cn' -> do
-                                         (JInteger c) <- popOpand
-                                         ol <- mapM f' (replicate c cn')
-                                         aa <- liftIO $ newListArray (0, c -1) ol
-                                         ar <- liftIO $ newIORef $ JArray aa
-                                         return $ JRef ar))
-               in do
-                    ma <- (f d) cn
-                    pushOpand ma
-                    incPC 4
-                    return (True, JNull)
-            I_checkcast_quick i -> do
-              jc <- getCurrentClass
-              nsn <- getCurrentNameSpace
-              t <- java_class <$> (resolveClass nsn $ lookupClassName i jc)
-              (JRef r) <- popOpand
-              (JObj f) <- liftIO $ readIORef r
-              checkCast t $ instanceof f
-              incPC 1
-              return (True, JNull)
-            I_instanceof_quick i -> do
-              jc <- getCurrentClass
-              nsn <- getCurrentNameSpace
-              t <- java_class <$> (resolveClass nsn $ lookupClassName i jc)
-              (JRef r) <- popOpand
-              (JObj f) <- liftIO $ readIORef r
-              res <- checkCast t $ instanceof f
-              pushOpand (JInteger $ if res then 1 else 0)
-              incPC 1
-              return (True, JNull)
-            I_invokevirtual_quick_w i -> do
-              jc <- getCurrentClass
-              ns <- getCurrentNameSpace
-              let (_, n, d) = lookupMethodName i jc
-               in do
-                    args <- popArgs d
-                    o@(JRef oref) <- popOpand
-                    jc' <- (\(JObj o') -> instanceof o') <$> (liftIO $ readIORef oref)
-                    let mn = (class_this jc', n, d)
-                     in do
-                          r <- invokeMethod ns mn True (o:args)
-                          if last d == 'V' then return () else pushOpand r
-              incPC 3
-              return (True, JNull)
-            I_getfield_quick_w i -> do
-              (JRef oref) <- popOpand
-              o <- liftIO $ readIORef oref
-              jc <- getCurrentClass
-              let fn = lookupFieldName i jc
-                  (JObj o') = o
-               in do
-                    v <- readObjField fn o'
-                    pushOpand v
-              incPC 3
-              return (True, JNull)
-            I_putfield_quick_w i -> do
-              v <- popOpand
-              (JRef oref) <- popOpand
-              o <- liftIO $ readIORef oref
-              jc <- getCurrentClass
-              let fn = lookupFieldName i jc
-                  (JObj o') = o
-               in writeObjField fn o' v
-              incPC 3
+            I_ret_w i -> do
+              (JAddr p) <- readFrame i
+              putPC p
               return (True, JNull)
             I_breakpoint -> do
               incPC 1

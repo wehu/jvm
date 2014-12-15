@@ -122,23 +122,23 @@ module JavaClassReader(
         l  <- readu2
         cp <- count (l-1) readConstInfo
         let cp' = (ConstNull:cp)
-         in return $ listArray (0, (length cp') - 1) cp'
+        return $ listArray (0, (length cp') - 1) cp'
 
     readConstInfo :: JCParser ConstInfo
     readConstInfo = do
         tag <- readu1
         case tag of
-            1  -> ConstUtf8 <$> readutf8
-            3  -> ConstInteger <$> readu4
-            4  -> ConstFloat <$> readfloat
-            5  -> ConstLong <$> readu8
-            6  -> ConstDouble <$> readdouble
-            7  -> ConstClass <$> readu2
-            8  -> ConstString <$> readu2
-            9  -> ConstFieldRef <$> readu2 <*> readu2
-            10 -> ConstMethodRef <$> readu2 <*> readu2
+            1  -> ConstUtf8               <$> readutf8
+            3  -> ConstInteger            <$> readu4
+            4  -> ConstFloat              <$> readfloat
+            5  -> ConstLong               <$> readu8
+            6  -> ConstDouble             <$> readdouble
+            7  -> ConstClass              <$> readu2
+            8  -> ConstString             <$> readu2
+            9  -> ConstFieldRef           <$> readu2 <*> readu2
+            10 -> ConstMethodRef          <$> readu2 <*> readu2
             11 -> ConstInterfaceMethodRef <$> readu2 <*> readu2
-            12 -> ConstNameAndType <$> readu2 <*> readu2
+            12 -> ConstNameAndType        <$> readu2 <*> readu2
             _ -> error $ "unknown constant tag " ++ (show tag)
 
     readAccessFlags :: JCParser (S.Set AccessFlag)
@@ -162,7 +162,7 @@ module JavaClassReader(
 
     readName :: Bool -> JCParser String
     readName relex = do
-        i <- readu2
+        i  <- readu2
         cp <- getState
         if i == 0 && relex
         then return ""
@@ -527,38 +527,6 @@ module JavaClassReader(
                          199 -> readInstr2 I_ifnonnull
                          200 -> readInstr4 I_goto_w
                          201 -> readInstr4 I_jsr_w
-                         203 -> readInstr1 I_ldc_quick
-                         204 -> readInstr2 I_ldc_w_quick
-                         205 -> readInstr2 I_ldc2_w_quick
-                         206 -> readInstr2 I_getfield_quick
-                         207 -> readInstr2 I_putfield_quick
-                         208 -> readInstr2 I_getfield2_quick
-                         209 -> readInstr2 I_putfield2_quick
-                         210 -> readInstr2 I_getstatic_quick
-                         211 -> readInstr2 I_putstatic_quick
-                         212 -> readInstr2 I_getstatic2_quick
-                         213 -> readInstr2 I_putstatic2_quick
-                         214 -> readInstr2 I_invokevirtual_quick
-                         215 -> readInstr2 I_invokenonvirtual_quick
-                         216 -> readInstr2 I_invokesuper_quick
-                         217 -> readInstr2 I_invokestatic_quick
-                         218 -> do
-                            index <- readu2
-                            nargs <- readu1
-                            char '\000'
-                            return $ [I_invokeinterface_quick index nargs] ++ (generateUnknownInstr 4)
-                         219 -> readInstr2 I_invokevirtualobject_quick
-                         221 -> readInstr2 I_new_quick
-                         222 -> readInstr2 I_anewarray_quick
-                         223 -> do
-                            index <- readu2
-                            d     <- readu1
-                            return $ [I_multianewarray_quick index d] ++ (generateUnknownInstr 3)
-                         224 -> readInstr2 I_checkcast_quick
-                         225 -> readInstr2 I_instanceof_quick
-                         226 -> readInstr2 I_invokevirtual_quick_w
-                         227 -> readInstr2 I_getfield_quick_w
-                         228 -> readInstr2 I_putfield_quick_w
                          202 -> readInstr0 I_breakpoint
                          254 -> readInstr0 I_impdep1
                          255 -> readInstr0 I_impdep2
